@@ -1,27 +1,24 @@
-# 🚗 Driver Drowsiness Detection System
+# Driver Drowsiness Detection System
 
 ### UCS532 — Computer Vision (GAMMA) | RAI - 3W1C
 
 > A real-time driver drowsiness detection system built as part of the **UCS532 Computer Vision** course. It monitors the driver's eyes using computer vision techniques and triggers an alert when signs of drowsiness are detected — helping prevent accidents caused by fatigue.
 
-![Python](https://img.shields.io/badge/Python-3.x-blue.svg)
-![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green.svg)
-
 ---
 
-## 📌 Overview
+## Overview
 
 Drowsy driving is a leading cause of road accidents worldwide. This project leverages **computer vision** and **deep learning** techniques to detect driver drowsiness in real-time and trigger an alert to prevent accidents.
 
-## ✨ Features
+## Features
 
-- 🔍 **Real-time face & eye detection** using OpenCV and dlib
-- 😴 **Drowsiness detection** based on Eye Aspect Ratio (EAR)
-- 🔊 **Audio alert system** to wake up the driver
-- 📊 **Accuracy metrics** and performance evaluation
-- 🖥️ **Live webcam feed** with visual indicators
+- **Real-time face & eye detection** using OpenCV and dlib
+- **Drowsiness detection** based on Eye Aspect Ratio (EAR)
+- **Audio alert system** to wake up the driver
+- **Accuracy metrics** and performance evaluation
+- **Live webcam feed** with visual indicators
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Technology | Purpose |
 |------------|---------|
@@ -42,25 +39,25 @@ Drowsy driving is a leading cause of road accidents worldwide. This project leve
 ## 🔧 Scope of Improvement
 
 - ⚡ **Model Optimization** — Improve model accuracy by training on larger and more diverse datasets across different lighting conditions, ethnicities, and age groups.
-- 🌙 **Low-Light Performance** — Enhance detection reliability in nighttime or low-light driving conditions using infrared (IR) camera support.
-- 🎯 **Reduce False Positives** — Fine-tune EAR thresholds and frame-count parameters to minimize false drowsiness alerts (e.g., during natural blinking).
-- 🧠 **Multi-Feature Detection** — Combine eye-based detection with additional cues like head pose estimation and mouth yawning for more robust results.
-- 📱 **Cross-Platform Support** — Optimize the system to run efficiently on low-power devices like Raspberry Pi or mobile phones.
-- ⏱️ **Latency Reduction** — Reduce processing latency for smoother real-time detection, especially on systems without GPU support.
+- **Low-Light Performance** — Enhance detection reliability in nighttime or low-light driving conditions using infrared (IR) camera support.
+- **Reduce False Positives** — Fine-tune EAR thresholds and frame-count parameters to minimize false drowsiness alerts (e.g., during natural blinking).
+- **Multi-Feature Detection** — Combine eye-based detection with additional cues like head pose estimation and mouth yawning for more robust results.
+- **Cross-Platform Support** — Optimize the system to run efficiently on low-power devices like Raspberry Pi or mobile phones.
+- **Latency Reduction** — Reduce processing latency for smoother real-time detection, especially on systems without GPU support.
 
-## 🚀 Future Updates
+## Future Updates
 
 | Version | Planned Feature | Status |
 |---------|----------------|--------|
-| v2.0 | 🥱 **Yawn Detection** — Detect driver yawning using Mouth Aspect Ratio (MAR) as an additional drowsiness indicator | 🔜 Planned |
-| v2.1 | 🧭 **Head Pose Estimation** — Monitor head tilting and nodding to detect micro-sleeps | 🔜 Planned |
-| v2.2 | 📱 **Mobile App Integration** — Android/iOS app with real-time camera feed and push notifications | 🔜 Planned |
-| v2.3 | ☁️ **Cloud Dashboard** — Web-based dashboard for fleet managers to monitor driver alertness remotely | 🔜 Planned |
-| v3.0 | 🤖 **Edge AI Deployment** — Deploy optimized model on Raspberry Pi / NVIDIA Jetson for in-vehicle use | 🔜 Planned |
-| v3.1 | 🗣️ **Voice Alerts & Interaction** — Voice-based warnings and driver interaction for a hands-free experience | 🔜 Planned |
-| v3.2 | 📊 **Driver Fatigue Analytics** — Log drowsiness events over time and generate fatigue reports | 🔜 Planned |
+| v2.0 | **Yawn Detection** — Detect driver yawning using Mouth Aspect Ratio (MAR) as an additional drowsiness indicator | Planned |
+| v2.1 | **Head Pose Estimation** — Monitor head tilting and nodding to detect micro-sleeps | Planned |
+| v2.2 | **Mobile App Integration** — Android/iOS app with real-time camera feed and push notifications | Planned |
+| v2.3 | **Cloud Dashboard** — Web-based dashboard for fleet managers to monitor driver alertness remotely | Planned |
+| v3.0 | **Edge AI Deployment** — Deploy optimized model on Raspberry Pi / NVIDIA Jetson for in-vehicle use | Planned |
+| v3.1 | **Voice Alerts & Interaction** — Voice-based warnings and driver interaction for a hands-free experience | Planned |
+| v3.2 | **Driver Fatigue Analytics** — Log drowsiness events over time and generate fatigue reports | Planned |
 
-## 👥 Authors
+## Authors
 
 | # | Name | Roll No. | GitHub |
 |---|------|----------|--------|
