@@ -2,46 +2,47 @@ import cv2
 import dlib
 import numpy as np
 import os
-from scipy.spatial import distance as dist
+import joblib
+from classical_cv_pipeline import (
+    localize_eye_rois,
+    localize_mouth_roi,
+    fused_eye_state,
+    compute_mouth_aspect_ratio
+)
 
 # ===============================
 # PARAMETERS
 # ===============================
-EYE_AR_THRESH = 0.25
-EYE_AR_CONSEC_FRAMES = 20
-MAR_THRESH = 0.75
-
-# important ratios to consider, EAR and MAR
-
-def eye_aspect_ratio(eye):
-    A = dist.euclidean(eye[1], eye[5])
-    B = dist.euclidean(eye[2], eye[4])
-    C = dist.euclidean(eye[0], eye[3])
-    return (A + B) / (2.0 * C)
-
-def mouth_aspect_ratio(mouth):
-    A = dist.euclidean(mouth[2], mouth[10])
-    B = dist.euclidean(mouth[4], mouth[8])
-    C = dist.euclidean(mouth[0], mouth[6])
-    return (A + B) / (2.0 * C)
-
-#loading the detector!
+EYE_STATE_THRESH = 0.18
+EYE_STATE_CONSEC_FRAMES = 20
+MAR_THRESH = 0.6
 
 detector = dlib.get_frontal_face_detector()
-predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
 
-LEFT_EYE = list(range(36, 42))
-RIGHT_EYE = list(range(42, 48))
-MOUTH = list(range(48, 68))
+svm_model = None
+
+def load_svm_model():
+    """Load pre-trained eye state SVM model."""
+    global svm_model
+    if os.path.exists("eye_svm_model.pkl"):
+        svm_model = joblib.load("eye_svm_model.pkl")
+        print("✓ SVM model loaded")
+    else:
+        print("⚠ Warning: eye_svm_model.pkl not found. Train with train_eye_svm.py")
 
 # running the code on an image (if available)
 
 def run_on_dataset(folder_path):
 
+    if svm_model is None:
+        print("✗ SVM model not loaded. Cannot proceed.")
+        return
+
     valid_ext = (".jpg", ".jpeg", ".png", ".bmp")
 
-    folder_path = "/media/sparsh-sigma/CaptainSlow/Programming Stuff/Programming Stuff/Code _n_ Stuff/All Projects/All Projects/Computer Vision sem 6"   # keep or remove as needed
-    
+    if not os.path.isdir(folder_path):
+        print(f"✗ Folder not found: {folder_path}")
+        return
 
     for file in os.listdir(folder_path):
 
@@ -65,30 +66,42 @@ def run_on_dataset(folder_path):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
 
         for i, face in enumerate(faces):
-            shape = predictor(gray, face)
-            shape = np.array([[p.x, p.y] for p in shape.parts()])
+            fx, fy = face.left(), face.top()
+            fw, fh = face.right() - face.left(), face.bottom() - face.top()
+            cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), (100, 255, 0), 2)
 
-            leftEye = shape[LEFT_EYE]
-            rightEye = shape[RIGHT_EYE]
-            mouth = shape[MOUTH]
+            eye_rois = localize_eye_rois(gray, fx, fy, fw, fh)
+            mouth_roi = localize_mouth_roi(gray, fx, fy, fw, fh)
 
-            ear = (eye_aspect_ratio(leftEye) + eye_aspect_ratio(rightEye)) / 2.0
-            mar = mouth_aspect_ratio(mouth)
+            eye_scores = []
+            for (ex, ey, ew, eh) in eye_rois:
+                eye_patch = frame[ey:ey + eh, ex:ex + ew]
+                if eye_patch.size == 0:
+                    continue
+                score = fused_eye_state(eye_patch, svm_model)
+                eye_scores.append(score)
 
-            # Draw landmarks
-            for (x, y) in shape:
-                cv2.circle(frame, (x, y), 1, (0,255,0), -1)
+            avg_eye_score = np.mean(eye_scores) if eye_scores else 0.5
 
-            # Decision flags
-            drowsy = ear < EYE_AR_THRESH
+            if mouth_roi is not None:
+                mx, my, mw, mh = mouth_roi
+                mouth_patch = frame[my:my + mh, mx:mx + mw]
+                if mouth_patch.size > 0:
+                    mar = compute_mouth_aspect_ratio(mouth_patch)
+                else:
+                    mar = 0.0
+            else:
+                mar = 0.0
+
+            drowsy = avg_eye_score < EYE_STATE_THRESH
             yawning = mar > MAR_THRESH
 
-            # Console output
             print(f"→ Face {i+1}:")
+            print(f"   Eye openness: {avg_eye_score:.3f} (threshold: {EYE_STATE_THRESH})")
             print(f"   Drowsy: {'YES' if drowsy else 'NO'}")
+            print(f"   MAR: {mar:.3f} (threshold: {MAR_THRESH})")
             print(f"   Yawning: {'YES' if yawning else 'NO'}")
 
-            # Overlay text
             if drowsy:
                 cv2.putText(frame, "eyes closed (drowsy)", (10,30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
@@ -108,6 +121,10 @@ def run_on_dataset(folder_path):
 # running the code on webcam!
 def run_webcam():
 
+    if svm_model is None:
+        print("✗ SVM model not loaded. Cannot proceed.")
+        return
+
     COUNTER = 0
     cap = cv2.VideoCapture(0)
 
@@ -124,33 +141,44 @@ def run_webcam():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
 
         for face in faces:
-            shape = predictor(gray, face)
-            shape = np.array([[p.x, p.y] for p in shape.parts()])
+            fx, fy = face.left(), face.top()
+            fw, fh = face.right() - face.left(), face.bottom() - face.top()
+            cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), (100, 255, 0), 2)
 
-            leftEye = shape[LEFT_EYE]
-            rightEye = shape[RIGHT_EYE]
-            mouth = shape[MOUTH]
+            eye_rois = localize_eye_rois(gray, fx, fy, fw, fh)
+            mouth_roi = localize_mouth_roi(gray, fx, fy, fw, fh)
 
-            ear = (eye_aspect_ratio(leftEye) + eye_aspect_ratio(rightEye)) / 2.0
-            mar = mouth_aspect_ratio(mouth)
+            eye_scores = []
+            for (ex, ey, ew, eh) in eye_rois:
+                eye_patch = frame[ey:ey + eh, ex:ex + ew]
+                if eye_patch.size == 0:
+                    continue
+                score = fused_eye_state(eye_patch, svm_model)
+                eye_scores.append(score)
 
-            for (x, y) in shape:
-                cv2.circle(frame, (x, y), 1, (0,255,0), -1)
+            avg_eye_score = np.mean(eye_scores) if eye_scores else 0.5
 
+            if mouth_roi is not None:
+                mx, my, mw, mh = mouth_roi
+                mouth_patch = frame[my:my + mh, mx:mx + mw]
+                if mouth_patch.size > 0:
+                    mar = compute_mouth_aspect_ratio(mouth_patch)
+                else:
+                    mar = 0.0
+            else:
+                mar = 0.0
 
-            if ear < EYE_AR_THRESH:      # logic for drowsy
+            if avg_eye_score < EYE_STATE_THRESH:
                 COUNTER += 1
-                if COUNTER >= EYE_AR_CONSEC_FRAMES:
+                if COUNTER >= EYE_STATE_CONSEC_FRAMES:
                     cv2.putText(frame, "eyes closed (drowsy)", (10,30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
             else:
                 COUNTER = 0
 
-
-            if mar > MAR_THRESH:         # logic for yawming
-                cv2.putText(frame, "yawming", (10,60),
+            if mar > MAR_THRESH:
+                cv2.putText(frame, "yawning", (10,60),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,0,0), 2)
-
 
         cv2.imshow("detection using webcam", frame)
 
@@ -163,7 +191,9 @@ def run_webcam():
 
 
 if __name__ == "__main__":
-    choice = str(input("A. wecbcam (enter 1)\nB. sample image (enter 2)\n: "))
+    load_svm_model()
+
+    choice = str(input("A. webcam (enter 1)\nB. sample image (enter 2)\n: "))
 
     if choice == "1":
         run_webcam()
