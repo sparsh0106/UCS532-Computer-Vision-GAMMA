@@ -162,3 +162,5 @@ Pillow>=10.0.0
 | 1 | **Sherry Singh** | 102323042 | [@sherrysingh1410](https://github.com/sherrysingh1410) |
 | 2 | **Idhant Mehta** | 102323064 | [@Idhant-Mehta](https://github.com/Idhant-Mehta) |
 | 3 | **Sparsh** | 102323080 | [@sparsh0106](https://github.com/sparsh0106) |
+| 3 | **Garv Talwar** | 102373005 | [@garvtalwar](https://github.com/garvtalwar) |
+

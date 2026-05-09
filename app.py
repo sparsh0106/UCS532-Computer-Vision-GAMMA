@@ -2,9 +2,15 @@ import streamlit as st
 import cv2
 import dlib
 import numpy as np
-from scipy.spatial import distance as dist
 from PIL import Image
 import io
+import joblib
+from classical_cv_pipeline import (
+    localize_eye_rois,
+    localize_mouth_roi,
+    fused_eye_state,
+    compute_mouth_aspect_ratio
+)
 
 st.set_page_config(
     page_title="DrowsAlert · Driver Monitoring",
@@ -14,40 +20,27 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-#  CORE DETECTION LOGIC
+#  LOAD MODELS
 # ─────────────────────────────────────────────
-def eye_aspect_ratio(eye):
-    A = dist.euclidean(eye[1], eye[5])
-    B = dist.euclidean(eye[2], eye[4])
-    C = dist.euclidean(eye[0], eye[3])
-    return (A + B) / (2.0 * C)
+@st.cache_resource(show_spinner="Loading face detector…")
+def load_face_detector():
+    return dlib.get_frontal_face_detector()
 
-def mouth_aspect_ratio(mouth):
-    A = dist.euclidean(mouth[2], mouth[10])
-    B = dist.euclidean(mouth[4], mouth[8])
-    C = dist.euclidean(mouth[0], mouth[6])
-    return (A + B) / (2.0 * C)
-
-LEFT_EYE  = list(range(36, 42))
-RIGHT_EYE = list(range(42, 48))
-MOUTH     = list(range(48, 68))
-
-
-# ─────────────────────────────────────────────
-#  LOAD MODEL
-# ─────────────────────────────────────────────
-@st.cache_resource(show_spinner="Loading facial landmark model…")
-def load_model():
-    detector  = dlib.get_frontal_face_detector()
-    predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
-    return detector, predictor
+@st.cache_resource(show_spinner="Loading eye state classifier…")
+def load_svm_model():
+    try:
+        svm = joblib.load("eye_svm_model.pkl")
+        return svm
+    except FileNotFoundError:
+        st.error("⚠ eye_svm_model.pkl not found. Train with train_eye_svm.py")
+        return None
 
 
 # ─────────────────────────────────────────────
 #  FRAME PROCESSING
 # ─────────────────────────────────────────────
-def process_frame(frame, detector, predictor, ear_thresh, mar_thresh, draw_mesh=True):
-    gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+def process_frame(frame, detector, svm_model, eye_score_thresh, mar_thresh, draw_mesh=True):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = detector(gray)
     results = []
 
@@ -57,31 +50,46 @@ def process_frame(frame, detector, predictor, ear_thresh, mar_thresh, draw_mesh=
         return frame, results
 
     for i, face in enumerate(faces):
-        shape = predictor(gray, face)
-        shape = np.array([[p.x, p.y] for p in shape.parts()])
+        fx, fy = face.left(), face.top()
+        fw, fh = face.right() - face.left(), face.bottom() - face.top()
+        eye_rois = localize_eye_rois(gray, fx, fy, fw, fh)
+        mouth_roi = localize_mouth_roi(gray, fx, fy, fw, fh)
 
-        leftEye  = shape[LEFT_EYE]
-        rightEye = shape[RIGHT_EYE]
-        mouth    = shape[MOUTH]
+        eye_scores = []
+        for (ex, ey, ew, eh) in eye_rois:
+            eye_patch = frame[ey:ey + eh, ex:ex + ew]
+            if eye_patch.size == 0:
+                continue
+            score = fused_eye_state(eye_patch, svm_model)
+            eye_scores.append(score)
+            if draw_mesh:
+                cv2.rectangle(frame, (ex, ey), (ex + ew, ey + eh), (0, 255, 0), 1)
 
-        ear = (eye_aspect_ratio(leftEye) + eye_aspect_ratio(rightEye)) / 2.0
-        mar = mouth_aspect_ratio(mouth)
+        avg_eye_score = np.mean(eye_scores) if eye_scores else 0.5
 
-        drowsy  = ear < ear_thresh
+        if mouth_roi is not None:
+            mx, my, mw, mh = mouth_roi
+            mouth_patch = frame[my:my + mh, mx:mx + mw]
+            if mouth_patch.size > 0:
+                mar = compute_mouth_aspect_ratio(mouth_patch)
+            else:
+                mar = 0.0
+            if draw_mesh:
+                cv2.rectangle(frame, (mx, my), (mx + mw, my + mh), (255, 0, 0), 1)
+        else:
+            mar = 0.0
+
+        drowsy = avg_eye_score < eye_score_thresh
         yawning = mar > mar_thresh
 
-        results.append({"face": i + 1, "ear": ear, "mar": mar,
+        results.append({"face": i + 1, "eye_score": avg_eye_score, "mar": mar,
                         "drowsy": drowsy, "yawning": yawning})
 
         if draw_mesh:
-            for (x, y) in shape:
-                cv2.circle(frame, (x, y), 2, (0, 255, 0), -1)
-            x1, y1 = face.left(), face.top()
-            x2, y2 = face.right(), face.bottom()
             box_color = (0, 0, 255) if drowsy else (0, 165, 255) if yawning else (0, 255, 0)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+            cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), box_color, 2)
 
-        cv2.putText(frame, f"EAR: {ear:.3f}", (10, 30),
+        cv2.putText(frame, f"Eye Score: {avg_eye_score:.3f}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1)
         cv2.putText(frame, f"MAR: {mar:.3f}", (10, 55),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1)
@@ -98,7 +106,7 @@ def process_frame(frame, detector, predictor, ear_thresh, mar_thresh, draw_mesh=
 # ─────────────────────────────────────────────
 #  RENDER RESULTS
 # ─────────────────────────────────────────────
-def render_results(results, ear_thresh, mar_thresh):
+def render_results(results, eye_score_thresh, mar_thresh):
     if not results:
         st.warning("No face detected in frame.")
         return
@@ -108,8 +116,8 @@ def render_results(results, ear_thresh, mar_thresh):
             st.subheader(f"Face {r['face']}")
 
         col1, col2 = st.columns(2)
-        col1.metric("EAR (Eye Aspect Ratio)", f"{r['ear']:.3f}",
-                    delta=f"threshold: {ear_thresh:.2f}", delta_color="off")
+        col1.metric("Eye Openness Score", f"{r['eye_score']:.3f}",
+                    delta=f"threshold: {eye_score_thresh:.2f}", delta_color="off")
         col2.metric("MAR (Mouth Aspect Ratio)", f"{r['mar']:.3f}",
                     delta=f"threshold: {mar_thresh:.2f}", delta_color="off")
 
@@ -127,35 +135,31 @@ def render_results(results, ear_thresh, mar_thresh):
 st.sidebar.title("⚙️ Parameters")
 st.sidebar.caption("Tune detection sensitivity")
 
-ear_thresh    = st.sidebar.slider("EAR Threshold (Drowsiness)", 0.10, 0.40, 0.25, 0.01,
-                                   help="EAR below this value → drowsy")
-mar_thresh    = st.sidebar.slider("MAR Threshold (Yawning)",    0.40, 1.20, 0.75, 0.01,
-                                   help="MAR above this value → yawning")
-draw_mesh     = st.sidebar.checkbox("Draw 68-Point Landmark Mesh", value=True)
+eye_score_thresh = st.sidebar.slider("Eye Openness Threshold (Drowsiness)", 0.05, 0.35, 0.18, 0.01,
+                                      help="Eye score below this value → drowsy")
+mar_thresh       = st.sidebar.slider("MAR Threshold (Yawning)",             0.40, 1.20, 0.60, 0.01,
+                                      help="MAR above this value → yawning")
+draw_mesh        = st.sidebar.checkbox("Draw ROI Boxes", value=True)
 
 st.sidebar.divider()
-st.sidebar.caption("EAR reference: open eye ≈ 0.25–0.35 · closed < 0.20")
-st.sidebar.caption("MAR reference: resting ≈ 0.3–0.5 · yawning > 0.75")
+st.sidebar.caption("Eye score: 0 (closed) to 1 (open) · threshold default: 0.18")
+st.sidebar.caption("MAR reference: resting ≈ 0.3–0.5 · yawning > 0.60")
 
 
 # ─────────────────────────────────────────────
 #  HEADER
 # ─────────────────────────────────────────────
 st.title("👁️ DrowsAlert — Driver Fatigue Detection")
-st.caption("Real-time drowsiness and yawning detection using EAR/MAR analysis · dlib 68-point landmarks")
+st.caption("Real-time drowsiness and yawning detection using Haar cascades, HOG+SVM, and geometric analysis")
 st.divider()
 
 
 # ─────────────────────────────────────────────
-#  LOAD MODEL
+#  LOAD MODELS
 # ─────────────────────────────────────────────
-try:
-    detector, predictor = load_model()
-    model_ok = True
-except Exception as e:
-    model_ok = False
-    st.error(f"Could not load dlib model: {e}\n\n"
-             "Ensure `shape_predictor_68_face_landmarks.dat` is in the same directory as `app.py`.")
+detector = load_face_detector()
+svm_model = load_svm_model()
+model_ok = svm_model is not None
 
 
 # ─────────────────────────────────────────────
@@ -178,11 +182,11 @@ with tab_webcam:
             file_bytes = np.asarray(bytearray(camera_img.read()), dtype=np.uint8)
             frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
             annotated, results = process_frame(
-                frame.copy(), detector, predictor, ear_thresh, mar_thresh, draw_mesh
+                frame.copy(), detector, svm_model, eye_score_thresh, mar_thresh, draw_mesh
             )
             st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
                      caption="Analysed Frame", use_container_width=True)
-            render_results(results, ear_thresh, mar_thresh)
+            render_results(results, eye_score_thresh, mar_thresh)
         elif not model_ok:
             st.warning("Model not loaded.")
         else:
@@ -214,7 +218,7 @@ with tab_image:
                 continue
 
             annotated, results = process_frame(
-                frame.copy(), detector, predictor, ear_thresh, mar_thresh, draw_mesh
+                frame.copy(), detector, svm_model, eye_score_thresh, mar_thresh, draw_mesh
             )
             annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
 
@@ -230,7 +234,7 @@ with tab_image:
                     mime="image/png",
                 )
             with col_met:
-                render_results(results, ear_thresh, mar_thresh)
+                render_results(results, eye_score_thresh, mar_thresh)
 
             st.divider()
 
@@ -247,43 +251,52 @@ with tab_about:
     col_a, col_b = st.columns(2, gap="large")
 
     with col_a:
-        st.markdown("**EAR — Eye Aspect Ratio**")
+        st.markdown("**Eye Openness Detection**")
         st.markdown("""
-Computed from 6 landmark points per eye:
+Fused 3-method pipeline:
 
-```
-EAR = (‖p2−p6‖ + ‖p3−p5‖) / (2 · ‖p1−p4‖)
-```
+1. **Haar Cascade** (ROI localization)
+   - Detects eyes in top 55% of face box
 
-- Open eye → EAR ≈ 0.25–0.35
-- Closed eye → EAR drops near 0
-- Sustained low EAR over multiple frames = drowsy alert
+2. **HOG + LinearSVC** (primary classifier)
+   - Extracts HOG features from 24×24 patches
+   - Binary classifier: open/closed
+
+3. **Canny + Ellipse** (geometric confidence)
+   - Detects eye shape via edge detection
+   - Blends with SVM score: 70% SVM + 30% geometry
+
+**Final Score:** 0 (closed) to 1 (open)
+- Open eye → 0.3–0.8
+- Closed eye → 0.0–0.1
+- Threshold: 0.18 → drowsy alert
 
 **MAR — Mouth Aspect Ratio**
 
-Same approach applied to 20 mouth landmarks.
-A high MAR indicates an open mouth = yawn.
-Single-frame detection — no temporal window needed.
+- Haar cascade detects mouth in bottom 40% of face
+- Geometric contour analysis: height/width ratio
+- Threshold: 0.6 → yawning alert
         """)
 
     with col_b:
         st.markdown("**Detection Pipeline**")
         st.markdown("""
 1. Convert frame to grayscale
-2. dlib HOG detector finds face bounding boxes
-3. 68-point shape predictor localises facial geometry
-4. Extract eye landmarks (36–47) and mouth landmarks (48–67)
-5. Compute EAR and MAR per face
+2. Cascade classifier finds face bounding boxes
+3. Haar cascades localize eye and mouth ROIs
+4. Fused pipeline computes eye openness score
+5. Contour analysis computes MAR
 6. Apply thresholds → trigger alerts
 
-**Landmark regions**
+**Processing steps**
 
-| Points | Region |
-|--------|--------|
-| 0–16   | Jawline |
-| 36–41  | Left eye (EAR) |
-| 42–47  | Right eye (EAR) |
-| 48–67  | Mouth (MAR) |
+| Stage | Method |
+|-------|--------|
+| Face | dlib HOG+SVM detector |
+| Eyes | Haar cascade |
+| Mouth | Haar cascade |
+| Eye state | HOG + SVM + ellipse |
+| Mouth state | Contour geometry |
 
-**Stack:** OpenCV · dlib · NumPy · SciPy · Streamlit
+**Stack:** OpenCV · scikit-learn · scikit-image · NumPy · Streamlit
         """)
